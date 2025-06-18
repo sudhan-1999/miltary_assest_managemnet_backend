@@ -41,3 +41,9 @@ export async function getAllAssignedData(filter){
   console.log("Filter in getAllAssignedData:", filter);
   return client.db("asset_management").collection("Assigned").find(filter).toArray();
 }
+export async function transferingdata(transferdata) {
+  return await client.db("asset_management").collection("Transfer").insertOne(transferdata);
+}
+export async function toUpdate(filter,quantityUpdate){
+  return await client.db("asset_management").collection("Purchase").updateOne(filter, { $set: {Quantity:quantityUpdate} });
+}
