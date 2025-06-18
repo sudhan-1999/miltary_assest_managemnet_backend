@@ -1,5 +1,5 @@
 import express from "express";
-import { checkuser, getAllPurchases, getalltransfer, registeruser } from "./queries.js";
+import { checkuser, getAllAssignedData, getAllPurchases, getalltransfer, registeruser, Toputassigneddata } from "./queries.js";
 import {
   hassing,
   generatetoken,
@@ -70,7 +70,7 @@ router.post("/login", async (req, res) => {
     res.status(500).send("Internalserver error!");
   }
 });
-//filter need to check
+
 router.get(
   "/purchase",
   authenticateToken,
@@ -78,6 +78,7 @@ router.get(
   async (req, res) => {
     try {
       const user = req.user;
+      console.log("User from request:", user);
       let filter = {};
       let token = req.headers.authorization;
 
@@ -88,12 +89,14 @@ router.get(
       if (!user) {
         return res.status(401).send("Unauthorized");
       }
-      let userdata=await checkuser(user.userid);
-      console.log("User found:", userdata);
+      //let userdata=await checkuser(user.userid);
+      console.log("User found:", user.base);
       if (user.role === "commander" || user.role === "logistic officer") {
-        filter.Base = userdata.base;
+        filter.Base = new RegExp(`^${user.base}$`, 'i');//here used user.base instead of user.base
+        console.log(user.role, "has access to base:", user.base);
         console.log("Filter for commander/logistic officer:", filter);
       }
+      console.log("Filter for purchase history:", filter);
       const purchaseHistory = await getAllPurchases(filter);
 
       console.log("Purchase history:", purchaseHistory);
@@ -107,17 +110,13 @@ router.get(
     }
   }
 );
-//need to check filter except admin
+
 router.get("/transfer",authenticateToken,
   authorizeroles("logistic officer","commander","admin"),async (req,res)=>{
     try{
       let filter = {};
       const user = req.user;
       let token = req.headers.authorization;
-
-      if (!user) {
-        return res.status(401).send("Unauthorized");
-      }
      let verification= await verifyToken(token);
       if(!verification){
         return res.status(401).send("Unauthorized");
@@ -125,10 +124,10 @@ router.get("/transfer",authenticateToken,
       if (!user) {
         return res.status(401).send("Unauthorized");
       }
-      let userdata=await checkuser(user.userid);
-      console.log("User found:", userdata.base);
+      //let userdata=await checkuser(user.userid);
+      //console.log("User found:", userdata.base);
       if (user.role === "commander" || user.role === "logistic officer") {
-        filter.FromBase = userdata.base;
+        filter.FromBase = new RegExp(`^${user.base}$`, 'i');//here used user.base instead of userdata.base
         console.log("Filter for commander/logistic officer:", filter);
       }
       let tranferdata=await getalltransfer(filter)
@@ -144,4 +143,71 @@ router.get("/transfer",authenticateToken,
       res.status(500).send("Internal server error");
     }
   })
+
+router.post("/assign",authenticateToken,
+  authorizeroles("logistic officer","commander","admin"),async(req,res)=>{
+    try{
+      const {Weapon,AssignedTo,AssignedBy,Base} = req.body;
+      console.log("Received assignment data:", req.body);
+      const user = req.user;
+      console.log("User from request:", user.role);
+      let token = req.headers.authorization;
+      let verification= await verifyToken(token);
+      if(!verification){
+        return res.status(401).send("Unauthorized");
+      }
+      if (!user) {
+        return res.status(401).send("Unauthorized");
+      }
+      if (user.role === "logistic officer" ) {
+        return res.status(403).send("Forbidden: Only commanders or admin can assign weapons");
+      }
+      const assigningdata={Weapon,
+        AssignedTo,
+        AssignedBy,
+        Base,
+      AssigningDate: new Date(),
+      };
+      const assigned=await Toputassigneddata(assigningdata);
+      console.log("Assignment data:", assigned);
+      res.status(200).send({message:"Asset  assigned successfully"});
+    }catch(err){
+      console.error("Error during assignment:", err);
+      res.status(500).send("Internal server error");  
+    }
+  });
+router.get("/assigned",authenticateToken,authorizeroles("logistic officer","commander","admin"),async(req,res)=>{
+  try{
+    const user = req.user;
+    let token = req.headers.authorization;
+    let verification= await verifyToken(token);
+    const filter={};
+    if(!verification){
+      return res.status(401).send("Unauthorized");
+    }
+    if (!user) {
+      return res.status(401).send("Unauthorized");
+    }
+     if (user.role === "commander" || user.role === "admin") {
+        filter.Base = new RegExp(`^${user.base}$`, 'i');
+        console.log(user.role, "has access to base:", user.base);
+      }else if (user.role === "logistic officer") {
+        return res.status(403).send("Forbidden: Only commanders or admin can view assigned weapons");
+      }
+      console.log("Filter for assigned weapons:", filter);
+      const assignedData=await getAllAssignedData(filter)
+      res.status(200).send(assignedData);
+  }catch(err){
+    console.error("Error during assigned:", err);
+    res.status(500).send("Internal server error");
+  }
+});
+/*router.get("/dashboard",authenticateToken,authorizeroles("logistic officer","commander","admin"),async(req,res)=>{
+  try{
+
+  }catch(err){
+    console.error("Error during dashboard:", err);
+    res.status(500).send("Internal server error");
+  }
+})*/
 export default router;

@@ -30,7 +30,7 @@ export async function comparingpassword(password,user){
 export async function generatetoken(user){
     try{
         const token=jwt.sign(
-            {email:user.email,userid:user.userid,role:user.role},
+            {email:user.email,userid:user.userid,role:user.role,base:user.base},
             jwt_secret
         )
         return token;
@@ -57,6 +57,7 @@ export   const authenticateToken =async (req, res, next) => {
   }
   try {
     const user = await verifyToken(token);
+    console.log("Decoded user from token:", user);
     req.user = user;
     next();
   } catch (err) {

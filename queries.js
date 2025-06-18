@@ -33,3 +33,11 @@ export async function getalltransfer(filter={}) {
   return client.db("asset_management").collection("Transfer").find(filter).toArray();
 }
 
+export async function Toputassigneddata(assigningdata){
+  return await client.db("asset_management").collection("Assigned").insertOne(assigningdata);
+}
+
+export async function getAllAssignedData(filter){
+  console.log("Filter in getAllAssignedData:", filter);
+  return client.db("asset_management").collection("Assigned").find(filter).toArray();
+}
