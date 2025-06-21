@@ -31,54 +31,58 @@ import {
 
 const router = express.Router();
 
-router.post("/register",authenticateToken,
-  authorizeroles("logistic officer", "admin", "commander"), async (req, res) => {
-  try {
-    const user = req.user;
-    console.log("User from request:", user);
-    let token = req.headers.authorization;
-    let verification = await verifyToken(token);  
-    if (!verification) {
-      return res.status(401).send("Unauthorized");  
-    }
-    if (!user) {  
-      return res.status(401).send("Unauthorized");
-    }
-    if (user.role !== "admin") {
-      return res.status(403).send("Forbidden: Only admin can register users");
-    }
-    console.log("User role is admin, proceeding with registration");
-    const { name, userid, password, role, base } = req.body;
-    console.log("Received registration data:", req.body);
+router.post(
+  "/register",
+  authenticateToken,
+  authorizeroles("admin"),
+  async (req, res) => {
+    try {
+      const user = req.user;
+      console.log("User from request:", user);
+      let token = req.headers.authorization;
+      let verification = await verifyToken(token);
+      if (!verification) {
+        return res.status(401).send("Unauthorized");
+      }
+      if (!user) {
+        return res.status(401).send("Unauthorized");
+      }
+      if (user.role !== "admin") {
+        return res.status(403).send("Forbidden: Only admin can register users");
+      }
+      console.log("User role is admin, proceeding with registration");
+      const { name, userid, password, role, base } = req.body;
+      console.log("Received registration data:", req.body);
 
-    if (!name || !userid || !password || !role || !base) {
-      return res.status(400).json({ message: "All fields are required" });
+      if (!name || !userid || !password || !role || !base) {
+        return res.status(400).json({ message: "All fields are required" });
+      }
+
+      const existingUser = await checkuser(userid);
+      if (existingUser) {
+        return res.status(400).json({ message: "User already exists" });
+      }
+
+      const hashedPassword = await hassing(password);
+      const newUser = {
+        name,
+        userid,
+        password: hashedPassword,
+        role,
+        base,
+        creatredBy: user.userid,
+        creatredAt: new Date(),
+      };
+      console.log("newUser:", newUser);
+      await registeruser(newUser);
+
+      res.status(200).json({ message: "User registered successfully" });
+    } catch (error) {
+      console.error("Error during registration:", error);
+      res.status(500).json({ message: "Internal server error" });
     }
-
-    const existingUser = await checkuser(userid);
-    if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
-    }
-
-    const hashedPassword = await hassing(password);
-    const newUser = {
-      name,
-      userid,
-      password: hashedPassword,
-      role,
-      base,
-      creatredBy: user.userid,
-      creatredAt: new Date(),
-    };
-    console.log("newUser:", newUser);
-    await registeruser(newUser);
-
-    res.status(200).json({ message: "User registered successfully" });
-  } catch (error) {
-    console.error("Error during registration:", error);
-    res.status(500).json({ message: "Internal server error" });
   }
-});
+);
 router.post("/login", async (req, res) => {
   try {
     const { userid, password } = req.body;
@@ -189,9 +193,10 @@ router.post(
   authorizeroles("logistic officer", "commander", "admin"),
   async (req, res) => {
     try {
-      const { Weapon, AssignedTo, AssignedBy, Base } = req.body;
+      const { Weapon, Quantity, AssignedTo, AssignedBy, Base } = req.body;
       console.log("Received assignment data:", req.body);
       const user = req.user;
+      const filter = {};
       console.log("User from request:", user.role);
       let token = req.headers.authorization;
       let verification = await verifyToken(token);
@@ -206,15 +211,46 @@ router.post(
           .status(403)
           .send("Forbidden: Only commanders or admin can assign weapons");
       }
+      if (user.role === "admin") {
+        filter.Base = new RegExp(`^${Base}$`, "i");
+        console.log(user.role, "has access to base:", Base);
+        filter.Weapon = new RegExp(`^${Weapon}$`, "i");
+        console.log("Filter for Weapon:", Weapon);
+      }
+      if (user.role === "commander") {
+        filter.Base = new RegExp(`^${user.base}$`, "i");
+        console.log(user.role, "has access to base:", user.base);
+        filter.Weapon = new RegExp(`^${Weapon}$`, "i");
+        console.log("Filter for Weapon:", Weapon);
+      }
+      console.log("Filter for assignment:", filter);
+
+      const invetory = await getinventory(filter);
+      if (invetory.length === 0) {
+        return res
+          .status(404)
+          .send("No inventory found for this weapon at the specified base");
+      }
       const assigningdata = {
         Weapon,
+        Quantity,
         AssignedTo,
         AssignedBy,
         Base,
         AssigningDate: new Date(),
       };
+      if (invetory[0].TotalQuantity < 1) {
+        return res
+          .status(400)
+          .send("Insufficient quantity available for assignment");
+      }
+      const toupdateinventory = invetory[0].TotalQuantity - Quantity;
+      await toUpdate(filter, toupdateinventory);
+      console.log("Updated inventory quantity:", toupdateinventory);
       const assigned = await Toputassigneddata(assigningdata);
+
       console.log("Assignment data:", assigned);
+
       res.status(200).send({ message: "Asset  assigned successfully" });
     } catch (err) {
       console.error("Error during assignment:", err);
@@ -238,7 +274,7 @@ router.get(
       if (!user) {
         return res.status(401).send("Unauthorized");
       }
-      if (user.role === "commander" || user.role === "admin") {
+      if (user.role === "commander") {
         filter.Base = new RegExp(`^${user.base}$`, "i");
         console.log(user.role, "has access to base:", user.base);
       } else if (user.role === "logistic officer") {
@@ -250,6 +286,7 @@ router.get(
       }
       console.log("Filter for assigned weapons:", filter);
       const assignedData = await getAllAssignedData(filter);
+      console.log("Assigned data:", assignedData);
       res.status(200).send(assignedData);
     } catch (err) {
       console.error("Error during assigned:", err);
@@ -263,7 +300,7 @@ router.post(
   authorizeroles("logistic officer", "commander", "admin"),
   async (req, res) => {
     try {
-      const { Weapon, Type, Quantity, FromBase, ToBase, TransferredBy } =
+      const { Weapon, Quantity, FromBase, ToBase, TransferredBy } =
         req.body;
       console.log("Received transfer data:", req.body);
       const filter = {};
@@ -297,7 +334,7 @@ router.post(
       const transferData = {
         Weapon,
         inventoryId: inventory[0]._id,
-        Type,
+        Type:inventory[0].Type,
         Quantity,
         FromBase,
         ToBase,
@@ -323,7 +360,7 @@ router.post(
       } else {
         return res
           .status(400)
-          .send("Insufficient quantity available for transfer");
+          .send({ message: "Insufficient quantity available for transfer" });
       }
     } catch (err) {
       console.error("Error during transfer:", err);
@@ -399,12 +436,14 @@ router.post(
 router.post(
   "/expendedasset",
   authenticateToken,
-  authorizeroles( "commander", "admin"),
+  authorizeroles("commander", "admin"),
   async (req, res) => {
     try {
-      const { Weapon, Type, Quantity,Reason, Base } = req.body;
+      const { Weapon,  Quantity, Reason, Base } = req.body;
       console.log("Received expended asset data:", req.body);
       const user = req.user;
+      console.log("User from request:", user);
+      const filter = {};
       let token = req.headers.authorization;
       let verification = await verifyToken(token);
       if (!verification) {
@@ -418,10 +457,39 @@ router.post(
           .status(403)
           .send("Forbidden: Only admin/commander can expend assets");
       }
+      if (user.role === "admin" || user.role === "commander") {
+        filter.Base = new RegExp(`^${Base}$`, "i");
+        console.log(user.role, "has access to base:", Base);
+        filter.Weapon = new RegExp(`^${Weapon}$`, "i");
+        console.log("Filter for Weapon:", Weapon);
+      }
+      const inventory = await getinventory(filter);
+      console.log("Filter for expended asset:", filter);
+      console.log("Inventory for expended asset:", inventory);
+      if (inventory.length === 0) {
+        return res
+          .status(404)
+          .send({message:"No inventory found for this weapon at the specified base"});
+      }
+
+      if (inventory[0].Base !== Base) {
+        console.log(inventory[0].Base, Base);
+        return res
+          .status(404)
+          .send({message:"Inventory exists but not for the specified base"});
+      }
+
+      if (inventory[0].TotalQuantity < Quantity) {
+        return res
+          .status(400)
+          .send({ message: "Insufficient quantity available for expending" });
+      }
+     
+      console.log("inventory:", inventory);
 
       const expendedData = {
         Weapon,
-        Type,
+        Type: inventory[0].Type,
         Quantity,
         Reason,
         Base,
@@ -439,7 +507,7 @@ router.post(
       if (checkinvetory.length === 0) {
         return res
           .status(404)
-          .send("No inventory found for this weapon at the specified base");
+          .send({message:"No inventory found for this weapon at the specified base"});
       }
       console.log(" inventory item :", checkinvetory[0]);
       if (checkinvetory[0]) {
@@ -462,100 +530,155 @@ router.post(
   }
 );
 
-router.get('/dashboard', authenticateToken,authorizeroles("logistic officer","commander","admin"),async (req, res) => {
-  try {
-    const user = req.user; 
-    console.log("User from request:", user);
-    let token = req.headers.authorization; 
-    let verification = await verifyToken(token);
+router.get(
+  "/dashboard",
+  authenticateToken,
+  authorizeroles("logistic officer", "commander", "admin"),
+  async (req, res) => {
+    try {
+      const user = req.user;
+      console.log("User from request:", user);
+      let token = req.headers.authorization;
+      let verification = await verifyToken(token);
       if (!verification) {
         return res.status(401).send("Unauthorized");
       }
       if (!user) {
         return res.status(401).send("Unauthorized");
-      } 
-    let filter = {};
-    if (user.role !== "admin") {
-      filter.Base = user.base;
+      }
+      let filter = {};
+      if (user.role !== "admin") {
+        filter.Base = user.base;
+      }
+      const inventory = await client
+        .db("asset_management")
+        .collection("Inventory")
+        .find(filter)
+        .toArray();
+      console.log("Inventory data:", inventory);
+      const report = [];
+
+      for (const item of inventory) {
+        const { Weapon, Type, Base } = item;
+
+        const purchase = await purchasedata(Weapon, Type, Base);
+        const transferedIn = await transferin(Weapon, Type, Base);
+        const transferedOut = await transferout(Weapon, Type, Base);
+        const assigneddata = await assigned(Weapon, Type, Base);
+        const expendeddata = await expended(Weapon, Type, Base);
+
+        const PurchaseQty = purchase[0]?.total || 0;
+        const TransferedIn = transferedIn[0]?.total || 0;
+        const TransferedOut = transferedOut[0]?.total || 0;
+        const AssignedQuantity = assigneddata[0]?.total || 0;
+        const ExpendedQuantity = expendeddata[0]?.total || 0;
+        const ClosingBalance = item.TotalQuantity;
+        const NetMovement =
+          PurchaseQty +
+          TransferedIn -
+          TransferedOut -
+          AssignedQuantity -
+          ExpendedQuantity;
+        const OpeningBalance = ClosingBalance - NetMovement;
+
+        report.push({
+          Weapon,
+          Type,
+          Base,
+          OpeningBalance,
+          PurchaseQty,
+          TransferedIn,
+          TransferedOut,
+          AssignedQuantity,
+          ExpendedQuantity,
+          NetMovement,
+          ClosingBalance,
+        });
+      }
+      console.log("Generated report:", report);
+      if (report.length === 0) {
+        return res.status(404).send("No asset movement data found ");
+      }
+      res.status(200).json(report);
+    } catch (error) {
+      console.error("Error generating asset movement summary:", error);
+      res.status(500).send("Internal Server Error");
     }
-    const inventory = await client.db("asset_management").collection("Inventory").find(filter).toArray();
-console.log("Inventory data:", inventory);
-    const report = [];
-
-    for (const item of inventory) {
-      const { Weapon, Type, Base } = item;
-
-      const purchase = await purchasedata(Weapon, Type, Base);
-      const transferedIn = await transferin(Weapon, Type, Base);
-      const transferedOut = await transferout(Weapon, Type, Base);
-      const assigneddata = await assigned(Weapon, Type, Base);
-      const expendeddata = await expended(Weapon, Type, Base);
-
-      const PurchaseQty = purchase[0]?.total || 0;
-      const TransferedIn = transferedIn[0]?.total || 0;
-      const TransferedOut = transferedOut[0]?.total || 0;
-      const AssignedQuantity = assigneddata[0]?.total || 0;
-      const ExpendedQuantity = expendeddata[0]?.total || 0;
-      const ClosingBalance = item.TotalQuantity;
-      const NetMovement = PurchaseQty + TransferedIn - TransferedOut - AssignedQuantity - ExpendedQuantity;
-      const OpeningBalance = ClosingBalance - NetMovement;
-
-      report.push({
-        Weapon,
-        Type,
-        Base,
-        OpeningBalance,
-        PurchaseQty,
-        TransferedIn,
-        TransferedOut,
-        AssignedQuantity,
-        ExpendedQuantity,
-        NetMovement,
-        ClosingBalance
-      });
-    }
-console.log("Generated report:", report);
-    if (report.length === 0) {
-      return res.status(404).send("No asset movement data found ");
-    }
-    res.status(200).json(report);
-  } catch (error) {
-    console.error("Error generating asset movement summary:", error);
-    res.status(500).send("Internal Server Error");
   }
-});
-router.get("/expendedassets", authenticateToken,
-  authorizeroles("commander", "admin"),async (req, res) => {
-  try {
-    const user = req.user;
-    const filter={};
-    console.log("User from request:", user);
-    let token = req.headers.authorization;
-    let verification = await verifyToken(token);
-    if (!verification) {
-      return res.status(401).send("Unauthorized");
+);
+router.get(
+  "/expendedassets",
+  authenticateToken,
+  authorizeroles("commander", "admin"),
+  async (req, res) => {
+    try {
+      const user = req.user;
+      const filter = {};
+      console.log("User from request:", user);
+      let token = req.headers.authorization;
+      let verification = await verifyToken(token);
+      if (!verification) {
+        return res.status(401).send("Unauthorized");
+      }
+      if (!user) {
+        return res.status(401).send("Unauthorized");
+      }
+      if (user.role !== "admin" && user.role !== "commander") {
+        return res
+          .status(403)
+          .send("Forbidden: Only admin/commander can view expended assets");
+      }
+      if (user.role === "commander") {
+        filter.Base = new RegExp(`^${user.base}$`, "i");
+      }
+      const expendedAssets = await getexpended();
+
+      console.log("Expended assets:", expendedAssets);
+      if (!expendedAssets[0] || expendedAssets.length === 0) {
+        return res.status(404).send("No expended assets found");
+      }
+      res.status(200).send(expendedAssets);
+    } catch (error) {
+      console.error("Error fetching expended assets:", error);
+      res.status(500).send("Internal Server Error");
     }
-    if (!user) {
-      return res.status(401).send("Unauthorized");
+  }
+);
+/*router.post(
+  "/regiteruser",
+  authenticateToken,
+  authorizeroles("logistic officer", "commander", "admin"),
+  async (req, res) => {
+    try {
+      const { name, userid, password, role, base } = req.body;
+      console.log("Received registration data:", req.body);
+
+      if (!name || !userid || !password || !role || !base) {
+        return res.status(400).json({ message: "All fields are required" });
+      }
+
+      const hashedPassword = await hassing(password);
+
+      const newUser = {
+        name,
+        userid,
+        password: hashedPassword,
+        role,
+        base,
+        creatredBy: req.user?.userid, // assuming `authenticateToken` sets `req.user`
+        creatredAt: new Date(),
+      };
+
+      console.log("newUser:", newUser);
+
+      await registeruser(newUser);
+
+      res.status(200).json({ message: "User registered successfully" });
+    } catch (error) {
+      console.error("Error during user registration:", error);
+      res.status(500).json({ message: "Internal server error" });
     }
-    if (user.role !== "admin" && user.role !== "commander") {
-      return res
-        .status(403)
-        .send("Forbidden: Only admin/commander can view expended assets");
-    }
-    if(user.role === "commander" ){
-      filter.Base = new RegExp(`^${user.base}$`, "i");
-    }
-    const expendedAssets = await getexpended();
-  
-    console.log("Expended assets:", expendedAssets);
-    if (!expendedAssets[0] || expendedAssets.length === 0) {
-      return res.status(404).send("No expended assets found");
-    }
-    res.status(200).send(expendedAssets);
-  }catch (error) {
-    console.error("Error fetching expended assets:", error);
-    res.status(500).send("Internal Server Error");
-  }});
+  }
+);*/
 
 export default router;
