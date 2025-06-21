@@ -13,7 +13,6 @@ async function connectToMongo() {
 
 export const client = await connectToMongo();
 
-//asset_management.Purchase users
 export const checkuser = async (userid) => {
   let user = await client
     .db("asset_management")
@@ -38,7 +37,6 @@ export async function getAllPurchases(filter = {}) {
 }
 
 export async function getalltransfer(filter = {}) {
-  console.log("Filter in getalltransfer:", filter);
   return client
     .db("asset_management")
     .collection("Transfer")
@@ -54,7 +52,6 @@ export async function Toputassigneddata(assigningdata) {
 }
 
 export async function getAllAssignedData(filter) {
-  console.log("Filter in getAllAssignedData:", filter);
   return client
     .db("asset_management")
     .collection("Assigned")
